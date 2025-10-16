@@ -1,11 +1,13 @@
 package br.com.inalerta.inalerta;
 
+import com.google.cloud.firestore.Firestore;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.web.client.RestTemplate;
 
 @SpringBootApplication
+
 public class InalertaApplication {
 
 	public static void main(String[] args) {
@@ -15,6 +17,7 @@ public class InalertaApplication {
     public RestTemplate restTemplate() {
         return new RestTemplate();
     }
+
 
 
 }
