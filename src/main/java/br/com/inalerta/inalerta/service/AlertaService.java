@@ -4,9 +4,11 @@ import br.com.inalerta.inalerta.entity.Alerta;
 import br.com.inalerta.inalerta.repositories.FirebaseRepository;
 import com.opencsv.bean.CsvToBeanBuilder;
 import lombok.RequiredArgsConstructor;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-
+import org.springframework.http.HttpStatus; // IMPORTAR ISTO
+import org.springframework.web.client.HttpClientErrorException;
 import java.io.StringReader;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -20,74 +22,148 @@ public class AlertaService {
 
 
     private static final String INPE_CSV_BASE_URL = "https://dataserver-coids.inpe.br/queimadas/queimadas/focos/csv/10min/";
+    private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmm");
 
     private final RestTemplate restTemplate;
     private final FirebaseRepository firebaseRepository;
 
-
     public List<Alerta> getUltimosFocos() {
-        List<Alerta> alertas;
+        System.out.println("Endpoint /getUltimosFocos chamado. A busca de dados é feita apenas pela tarefa agendada.");
+        return Collections.emptyList();
+    }
+
+    @Scheduled(fixedRate = 600000, initialDelay = 10000)
+    public void tarefaBuscarEsalvarFocos() {
+        System.out.println("--- Tarefa Agendada: Verificando 'catch-up' de focos no INPE ---");
+
         try {
-            String url = buildUrlParaUltimoCsvDisponivel();
-            System.out.println("Buscando dados de: " + url);
+            // 1. Descobre qual é o último arquivo que *deveria* existir
+            LocalDateTime dataArquivoMaisRecente = getTimestampDoUltimoArquivoDisponivel();
+            String ultimoSalvoNome = firebaseRepository.getUltimoArquivoProcessado();
 
-            String csvData = restTemplate.getForObject(url, String.class);
-
-            if (csvData == null || csvData.isEmpty()) {
-                return Collections.emptyList();
+            LocalDateTime proximoProcessar;
+            if (ultimoSalvoNome == null) {
+                proximoProcessar = dataArquivoMaisRecente;
+            } else {
+                proximoProcessar = parseDataFromNomeArquivo(ultimoSalvoNome).plusMinutes(10);
             }
 
-            try (StringReader reader = new StringReader(csvData)) {
-                // Etapa de conversão do CSV
-                alertas = new CsvToBeanBuilder<Alerta>(reader)
-                        .withType(Alerta.class)
-                        .withSkipLines(1)
-                        .build()
-                        .parse();
+            // 2. O "LOOP DE CATCH-UP"
+            // Continua rodando ENQUANTO o arquivo que queremos processar
+            // não for MAIS NOVO que o último arquivo que *deveria* existir.
+            while (!proximoProcessar.isAfter(dataArquivoMaisRecente)) {
+
+                String nomeArquivoLoop = formatNomeArquivo(proximoProcessar);
+                String urlLoop = INPE_CSV_BASE_URL + nomeArquivoLoop;
+
+                System.out.println("--- Processando 'catch-up': " + nomeArquivoLoop + " ---");
+
+                int statusCode = buscarEsalvarNovosFocos(urlLoop);
+
+                // --- ESTA É A LÓGICA CORRIGIDA ---
+
+                if (statusCode == 1 || statusCode == 0) {
+                    // SUCESSO (Salvou ou estava vazio):
+                    // Atualiza o marcador e continua o loop.
+                    firebaseRepository.setUltimoArquivoProcessado(nomeArquivoLoop);
+                    if (statusCode == 1) {
+                        System.out.println("--- 'Catch-up' salvo. Marcador atualizado para: " + nomeArquivoLoop + " ---");
+                    } else {
+                        System.out.println("--- 'Catch-up' vazio. Marcador atualizado para: " + nomeArquivoLoop + " ---");
+                    }
+                } else if (statusCode == -2) {
+                    // ARQUIVO NÃO ENCONTRADO (404 - O BUG QUE VOCÊ ACHOU):
+                    // O INPE pulou este arquivo. Nós também devemos "pular".
+                    // Atualizamos o marcador para *fingir* que processamos este arquivo
+                    // e o loop continuará para o próximo (ex: 16:30).
+                    System.out.println("--- 'Catch-up' pulando arquivo " + nomeArquivoLoop + " (404). Marcando como processado.");
+                    firebaseRepository.setUltimoArquivoProcessado(nomeArquivoLoop);
+                } else if (statusCode == -1) {
+                    // ERRO REAL (500, etc.):
+                    // Paramos o loop para tentar este mesmo arquivo de novo no próximo ciclo.
+                    System.out.println("--- 'Catch-up' falhou (Erro de Servidor). Marcador NÃO atualizado.");
+                    break; // PARA O LOOP
+                }
+
+                // Incrementa para o próximo arquivo, independentemente do resultado
+                // (exceto em erro -1, onde o 'break' acontece)
+                proximoProcessar = proximoProcessar.plusMinutes(10);
             }
+
+            System.out.println("--- Tarefa Agendada: 'Catch-up' concluído. ---");
+
         } catch (Exception e) {
-
-            System.err.println("Erro ao buscar ou processar dados do INPE: " + e.getMessage());
-
+            System.err.println("Erro durante a tarefa agendada de 'catch-up' do INPE: " + e.getMessage());
             e.printStackTrace();
-            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Lógica centralizada para buscar e salvar.
+     * Retorna um código de status (int).
+     */
+    private int buscarEsalvarNovosFocos(String url) {
+        List<Alerta> alertas;
+        String csvData;
+
+        try {
+            csvData = restTemplate.getForObject(url, String.class);
+            if (csvData == null || csvData.isEmpty()) {
+                return 0; // Sucesso, mas vazio
+            }
+        } catch (HttpClientErrorException e) {
+            if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
+                return -2; // Código de status "Arquivo não existe"
+            }
+            System.err.println("Erro (HttpClientErrorException) ao buscar dados do INPE: " + e.getMessage());
+            return -1; // Falha real
+        } catch (Exception e) {
+            System.err.println("Erro (Exception) ao buscar dados do INPE: " + e.getMessage());
+            return -1; // Falha real
         }
 
-        // Se a lista de alertas foi criada com sucesso, tentamos salvar no Firebase
+        try (StringReader reader = new StringReader(csvData)) {
+            alertas = new CsvToBeanBuilder<Alerta>(reader)
+                    .withType(Alerta.class)
+                    .withSkipLines(1)
+                    .build()
+                    .parse();
+        } catch (Exception e) {
+            System.err.println("Erro ao processar CSV: " + e.getMessage());
+            return -1; // Falha real
+        }
+
         if (alertas != null && !alertas.isEmpty()) {
             try {
-                // Etapa de salvamento no Firebase
                 System.out.println("Salvando " + alertas.size() + " alertas no Firebase...");
                 firebaseRepository.salvarAlertas(alertas);
                 System.out.println("Alertas salvos com sucesso!");
+                return 1; // Sucesso e salvou
             } catch (Exception e) {
-                // Catch específico para erros do Firebase
                 System.err.println("!!! ERRO AO SALVAR DADOS NO FIREBASE: " + e.getMessage());
-                e.printStackTrace();
-                return alertas;
+                return -1; // Falha real
             }
         }
 
-        return alertas;
+        return 0; // Sucesso, mas o CSV não continha alertas
     }
 
-    private String buildUrlParaUltimoCsvDisponivel() {
+    // --- Métodos Auxiliares de Data (sem mudanças) ---
 
+    private LocalDateTime getTimestampDoUltimoArquivoDisponivel() {
         LocalDateTime agoraUTC = LocalDateTime.now(ZoneId.of("UTC"));
-
-
         int minutoAtual = agoraUTC.getMinute();
         int minutoArredondado = (minutoAtual / 10) * 10;
+        // Calcula o timestamp do último arquivo que *deveria* existir
+        return agoraUTC.withMinute(minutoArredondado).withSecond(0).withNano(0).minusMinutes(10);
+    }
 
-        LocalDateTime dataArquivo = agoraUTC.withMinute(minutoArredondado).withSecond(0).withNano(0);
+    private LocalDateTime parseDataFromNomeArquivo(String nomeArquivo) {
+        String dataString = nomeArquivo.substring(12, nomeArquivo.length() - 4);
+        return LocalDateTime.parse(dataString, formatter);
+    }
 
-
-        dataArquivo = dataArquivo.minusMinutes(10);
-
-
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmm");
-        String nomeArquivo = "focos_10min_" + dataArquivo.format(formatter) + ".csv";
-
-        return INPE_CSV_BASE_URL + nomeArquivo;
+    private String formatNomeArquivo(LocalDateTime data) {
+        return "focos_10min_" + data.format(formatter) + ".csv";
     }
 }
