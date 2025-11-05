@@ -31,3 +31,8 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### .env ###
+.env
+
+/src/main/resources/inalerta-93817-firebase-adminsdk-fbsvc-9c19efe413.json
