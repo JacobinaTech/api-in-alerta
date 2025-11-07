@@ -7,7 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.http.HttpStatus; // IMPORTAR ISTO
+import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 import java.io.StringReader;
 import java.time.LocalDateTime;
@@ -48,8 +48,8 @@ public class AlertaService {
                 proximoProcessar = parseDataFromNomeArquivo(ultimoSalvoNome).plusMinutes(10);
             }
 
-            // 2. O "LOOP DE CATCH-UP"
-            // Continua rodando ENQUANTO o arquivo que queremos processar
+
+            // O "LOOP DE CATCH-UP" continua rodando ENQUANTO o arquivo que queremos processar
             // não for MAIS NOVO que o último arquivo que *deveria* existir.
             while (!proximoProcessar.isAfter(dataArquivoMaisRecente)) {
 
@@ -60,7 +60,6 @@ public class AlertaService {
 
                 int statusCode = buscarEsalvarNovosFocos(urlLoop);
 
-                // --- ESTA É A LÓGICA CORRIGIDA ---
 
                 if (statusCode == 1 || statusCode == 0) {
                     // SUCESSO (Salvou ou estava vazio):
@@ -72,17 +71,14 @@ public class AlertaService {
                         System.out.println("--- 'Catch-up' vazio. Marcador atualizado para: " + nomeArquivoLoop + " ---");
                     }
                 } else if (statusCode == -2) {
-                    // ARQUIVO NÃO ENCONTRADO (404 - O BUG QUE VOCÊ ACHOU):
-                    // O INPE pulou este arquivo. Nós também devemos "pular".
-                    // Atualizamos o marcador para *fingir* que processamos este arquivo
-                    // e o loop continuará para o próximo (ex: 16:30).
+
                     System.out.println("--- 'Catch-up' pulando arquivo " + nomeArquivoLoop + " (404). Marcando como processado.");
                     firebaseRepository.setUltimoArquivoProcessado(nomeArquivoLoop);
                 } else if (statusCode == -1) {
                     // ERRO REAL (500, etc.):
                     // Paramos o loop para tentar este mesmo arquivo de novo no próximo ciclo.
                     System.out.println("--- 'Catch-up' falhou (Erro de Servidor). Marcador NÃO atualizado.");
-                    break; // PARA O LOOP
+                    break;
                 }
 
                 // Incrementa para o próximo arquivo, independentemente do resultado
@@ -109,17 +105,17 @@ public class AlertaService {
         try {
             csvData = restTemplate.getForObject(url, String.class);
             if (csvData == null || csvData.isEmpty()) {
-                return 0; // Sucesso, mas vazio
+                return 0;
             }
         } catch (HttpClientErrorException e) {
             if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
-                return -2; // Código de status "Arquivo não existe"
+                return -2;
             }
             System.err.println("Erro (HttpClientErrorException) ao buscar dados do INPE: " + e.getMessage());
-            return -1; // Falha real
+            return -1;
         } catch (Exception e) {
             System.err.println("Erro (Exception) ao buscar dados do INPE: " + e.getMessage());
-            return -1; // Falha real
+            return -1;
         }
 
         try (StringReader reader = new StringReader(csvData)) {
@@ -130,7 +126,7 @@ public class AlertaService {
                     .parse();
         } catch (Exception e) {
             System.err.println("Erro ao processar CSV: " + e.getMessage());
-            return -1; // Falha real
+            return -1;
         }
 
         if (alertas != null && !alertas.isEmpty()) {
@@ -138,23 +134,23 @@ public class AlertaService {
                 System.out.println("Salvando " + alertas.size() + " alertas no Firebase...");
                 firebaseRepository.salvarAlertas(alertas);
                 System.out.println("Alertas salvos com sucesso!");
-                return 1; // Sucesso e salvou
+                return 1;
             } catch (Exception e) {
                 System.err.println("!!! ERRO AO SALVAR DADOS NO FIREBASE: " + e.getMessage());
-                return -1; // Falha real
+                return -1;
             }
         }
 
-        return 0; // Sucesso, mas o CSV não continha alertas
+        return 0;
     }
 
-    // --- Métodos Auxiliares de Data (sem mudanças) ---
+
 
     private LocalDateTime getTimestampDoUltimoArquivoDisponivel() {
         LocalDateTime agoraUTC = LocalDateTime.now(ZoneId.of("UTC"));
         int minutoAtual = agoraUTC.getMinute();
         int minutoArredondado = (minutoAtual / 10) * 10;
-        // Calcula o timestamp do último arquivo que *deveria* existir
+
         return agoraUTC.withMinute(minutoArredondado).withSecond(0).withNano(0).minusMinutes(10);
     }
 
