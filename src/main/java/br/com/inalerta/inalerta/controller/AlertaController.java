@@ -10,6 +10,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import java.util.List;
+import java.util.Map;
 
 import java.util.List;
 
@@ -24,12 +26,13 @@ public class AlertaController {
 
 
     @GetMapping("/recentes")
-    public ResponseEntity<List<Alerta>> getFocosRecentes() {
-        List<Alerta> focos = inpeService.getUltimosFocos();
-        if (focos.isEmpty()) {
+    public ResponseEntity<List<Map<String, Object>>> getFocosRecentes() {
+        List<Map<String, Object>> focos = inpeService.getUltimosFocos();
 
+        if (focos.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
+
 
         return ResponseEntity.ok(focos);
     }
