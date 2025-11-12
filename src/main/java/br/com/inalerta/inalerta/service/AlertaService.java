@@ -15,6 +15,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -27,9 +28,18 @@ public class AlertaService {
     private final RestTemplate restTemplate;
     private final FirebaseRepository firebaseRepository;
 
-    public List<Alerta> getUltimosFocos() {
-        System.out.println("Endpoint /getUltimosFocos chamado. A busca de dados é feita apenas pela tarefa agendada.");
-        return Collections.emptyList();
+    public List<Map<String, Object>> getUltimosFocos() {
+        System.out.println("Endpoint /getUltimosFocos chamado. Buscando 20 alertas mais recentes do Firebase...");
+
+        try {
+
+            return firebaseRepository.buscarAlertasMaisRecentes();
+
+        } catch (Exception e) {
+            System.err.println("Erro ao buscar dados do Firebase para o front-end: " + e.getMessage());
+            e.printStackTrace();
+            return Collections.emptyList();
+        }
     }
 
     @Scheduled(fixedRate = 600000, initialDelay = 10000)
@@ -62,8 +72,7 @@ public class AlertaService {
 
 
                 if (statusCode == 1 || statusCode == 0) {
-                    // SUCESSO (Salvou ou estava vazio):
-                    // Atualiza o marcador e continua o loop.
+
                     firebaseRepository.setUltimoArquivoProcessado(nomeArquivoLoop);
                     if (statusCode == 1) {
                         System.out.println("--- 'Catch-up' salvo. Marcador atualizado para: " + nomeArquivoLoop + " ---");
@@ -75,14 +84,12 @@ public class AlertaService {
                     System.out.println("--- 'Catch-up' pulando arquivo " + nomeArquivoLoop + " (404). Marcando como processado.");
                     firebaseRepository.setUltimoArquivoProcessado(nomeArquivoLoop);
                 } else if (statusCode == -1) {
-                    // ERRO REAL (500, etc.):
-                    // Paramos o loop para tentar este mesmo arquivo de novo no próximo ciclo.
+
                     System.out.println("--- 'Catch-up' falhou (Erro de Servidor). Marcador NÃO atualizado.");
                     break;
                 }
 
-                // Incrementa para o próximo arquivo, independentemente do resultado
-                // (exceto em erro -1, onde o 'break' acontece)
+
                 proximoProcessar = proximoProcessar.plusMinutes(10);
             }
 
@@ -94,10 +101,7 @@ public class AlertaService {
         }
     }
 
-    /**
-     * Lógica centralizada para buscar e salvar.
-     * Retorna um código de status (int).
-     */
+
     private int buscarEsalvarNovosFocos(String url) {
         List<Alerta> alertas;
         String csvData;
