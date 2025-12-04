@@ -5,8 +5,7 @@ Sistema desenvolvido em **Java 21** com **Spring Boot**, integrado ao **Firebase
 ## Tecnologias Utilizadas 🛠️
 - **Java 21**
 - **Spring Boot**
-- **Spring Data JPA**
-- **Spring WebFlux**
+- **Scheduled + RestTemplate**
 - **Firebase**
 - **Inteligência Artificial (IA)**
 - **API pública do INPE (Queimadas)**
